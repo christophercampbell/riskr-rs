@@ -1,7 +1,7 @@
-use crate::actor::state::UserState;
 use crate::domain::evidence::RuleResult;
 use crate::domain::TxEvent;
 use std::fmt::Debug;
+use uuid::Uuid;
 
 /// Trait for stateless inline rules.
 ///
@@ -23,18 +23,24 @@ pub trait InlineRule: Send + Sync + Debug {
 
 /// Trait for stateful streaming rules.
 ///
-/// Streaming rules have access to the user's historical state
-/// (rolling 24h window) and can make decisions based on patterns
+/// Streaming rules have access to the storage layer to query
+/// historical transaction data and make decisions based on patterns
 /// over time.
+#[async_trait::async_trait]
 pub trait StreamingRule: Send + Sync + Debug {
     /// Unique identifier for this rule.
     fn id(&self) -> &str;
 
-    /// Evaluate the rule against a transaction with state context.
+    /// Evaluate the rule against a transaction with storage access.
     ///
-    /// The state provides access to the user's transaction history
-    /// for the rolling window (typically 24h).
-    fn evaluate(&self, event: &TxEvent, state: &UserState) -> RuleResult;
+    /// The storage provides access to query historical transaction data
+    /// for the subject (user/entity) identified by subject_id.
+    async fn evaluate(
+        &self,
+        event: &TxEvent,
+        subject_id: Uuid,
+        storage: &dyn crate::storage::Storage,
+    ) -> anyhow::Result<RuleResult>;
 }
 
 #[cfg(test)]
