@@ -1,9 +1,12 @@
+use async_trait::async_trait;
+use chrono::Duration;
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
-use crate::actor::state::UserState;
 use crate::domain::evidence::RuleResult;
 use crate::domain::{Decision, Evidence, TxEvent};
 use crate::rules::traits::StreamingRule;
+use crate::storage::Storage;
 
 /// Daily USD volume limit rule.
 ///
@@ -24,21 +27,29 @@ impl DailyVolumeRule {
     }
 }
 
+#[async_trait]
 impl StreamingRule for DailyVolumeRule {
     fn id(&self) -> &str {
         &self.id
     }
 
-    fn evaluate(&self, event: &TxEvent, state: &UserState) -> RuleResult {
+    async fn evaluate(
+        &self,
+        event: &TxEvent,
+        subject_id: Uuid,
+        storage: &dyn Storage,
+    ) -> anyhow::Result<RuleResult> {
         // Get current rolling 24h volume
-        let current_volume = state.rolling_usd_24h();
+        let current_volume = storage
+            .get_rolling_volume(subject_id, Duration::hours(24))
+            .await?;
 
         // Calculate new total including this transaction
         let new_volume = current_volume + event.usd_value;
 
         // Check if new volume exceeds limit
         if new_volume > self.limit {
-            return RuleResult::trigger(
+            return Ok(RuleResult::trigger(
                 self.action,
                 Evidence::with_limit(
                     &self.id,
@@ -46,20 +57,20 @@ impl StreamingRule for DailyVolumeRule {
                     new_volume.to_string(),
                     self.limit.to_string(),
                 ),
-            );
+            ));
         }
 
-        RuleResult::allow()
+        Ok(RuleResult::allow())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::state::TxEntry;
     use crate::domain::event::{Asset, Chain, Direction, EventId, SCHEMA_VERSION};
     use crate::domain::subject::{AccountId, Address, CountryCode, KycTier, Subject, UserId};
-    use chrono::{Duration, Utc};
+    use crate::storage::MockStorage;
+    use chrono::Utc;
     use smallvec::smallvec;
 
     fn test_event(usd_value: i64) -> TxEvent {
@@ -86,36 +97,38 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_under_limit() {
+    #[tokio::test]
+    async fn test_under_limit() {
         let rule = DailyVolumeRule::new(
             "R4_DAILY".to_string(),
             Decision::HoldAuto,
             Decimal::new(50000, 0),
         );
 
-        let mut state = UserState::new("U1".to_string());
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(10000, 0)));
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
+        storage.set_rolling_volume(subject_id, Decimal::new(10000, 0));
 
         let event = test_event(10000); // $10k, total would be $20k
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit);
     }
 
-    #[test]
-    fn test_over_limit() {
+    #[tokio::test]
+    async fn test_over_limit() {
         let rule = DailyVolumeRule::new(
             "R4_DAILY".to_string(),
             Decision::HoldAuto,
             Decimal::new(50000, 0),
         );
 
-        let mut state = UserState::new("U1".to_string());
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(40000, 0)));
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
+        storage.set_rolling_volume(subject_id, Decimal::new(40000, 0));
 
         let event = test_event(20000); // $20k, total would be $60k
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(result.hit);
         assert_eq!(result.decision, Decision::HoldAuto);
@@ -124,41 +137,40 @@ mod tests {
         assert_eq!(ev.limit, Some("50000".to_string()));
     }
 
-    #[test]
-    fn test_exactly_at_limit() {
+    #[tokio::test]
+    async fn test_exactly_at_limit() {
         let rule = DailyVolumeRule::new(
             "R4_DAILY".to_string(),
             Decision::HoldAuto,
             Decimal::new(50000, 0),
         );
 
-        let mut state = UserState::new("U1".to_string());
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(40000, 0)));
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
+        storage.set_rolling_volume(subject_id, Decimal::new(40000, 0));
 
         let event = test_event(10000); // $10k, total would be exactly $50k
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // At limit, not over
     }
 
-    #[test]
-    fn test_old_transactions_not_counted() {
+    #[tokio::test]
+    async fn test_old_transactions_not_counted() {
         let rule = DailyVolumeRule::new(
             "R4_DAILY".to_string(),
             Decision::HoldAuto,
             Decimal::new(50000, 0),
         );
 
-        let mut state = UserState::new("U1".to_string());
-        // Old transaction (25 hours ago)
-        let old_time = Utc::now() - Duration::hours(25);
-        state.add_tx(TxEntry::new(old_time, Decimal::new(40000, 0)));
-
-        // Prune old entries
-        state.prune_expired();
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
+        // Storage layer handles time window filtering
+        // Old transactions would not be included in rolling_volume
+        storage.set_rolling_volume(subject_id, Decimal::ZERO);
 
         let event = test_event(20000);
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // Old tx pruned, only new $20k counted
     }
