@@ -1,9 +1,12 @@
+use async_trait::async_trait;
+use chrono::Duration;
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
-use crate::actor::state::UserState;
 use crate::domain::evidence::RuleResult;
 use crate::domain::{Decision, Evidence, TxEvent};
 use crate::rules::traits::StreamingRule;
+use crate::storage::Storage;
 
 /// Structuring detection rule.
 ///
@@ -31,14 +34,22 @@ impl StructuringRule {
     }
 }
 
+#[async_trait]
 impl StreamingRule for StructuringRule {
     fn id(&self) -> &str {
         &self.id
     }
 
-    fn evaluate(&self, event: &TxEvent, state: &UserState) -> RuleResult {
+    async fn evaluate(
+        &self,
+        event: &TxEvent,
+        subject_id: Uuid,
+        storage: &dyn Storage,
+    ) -> anyhow::Result<RuleResult> {
         // Count existing small transactions
-        let small_count = state.count_small_tx(self.amount_threshold);
+        let small_count = storage
+            .get_small_tx_count(subject_id, Duration::hours(24), self.amount_threshold)
+            .await?;
 
         // Check if current transaction is also small
         let current_is_small = event.usd_value < self.amount_threshold;
@@ -51,8 +62,8 @@ impl StreamingRule for StructuringRule {
         };
 
         // Trigger if count exceeds threshold (not just equals)
-        if total_count > self.count_threshold as u64 {
-            return RuleResult::trigger(
+        if total_count > self.count_threshold {
+            return Ok(RuleResult::trigger(
                 self.action,
                 Evidence::with_limit(
                     &self.id,
@@ -60,19 +71,19 @@ impl StreamingRule for StructuringRule {
                     total_count.to_string(),
                     self.count_threshold.to_string(),
                 ),
-            );
+            ));
         }
 
-        RuleResult::allow()
+        Ok(RuleResult::allow())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::state::TxEntry;
     use crate::domain::event::{Asset, Chain, Direction, EventId, SCHEMA_VERSION};
     use crate::domain::subject::{AccountId, Address, CountryCode, KycTier, Subject, UserId};
+    use crate::storage::MockStorage;
     use chrono::Utc;
     use smallvec::smallvec;
 
@@ -100,8 +111,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_under_count_threshold() {
+    #[tokio::test]
+    async fn test_under_count_threshold() {
         let rule = StructuringRule::new(
             "R5_STRUCT".to_string(),
             Decision::Review,
@@ -109,20 +120,19 @@ mod tests {
             5,                       // 5 count threshold
         );
 
-        let mut state = UserState::new("U1".to_string());
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
         // Add 3 small transactions
-        for _ in 0..3 {
-            state.add_tx(TxEntry::new(Utc::now(), Decimal::new(5000, 0)));
-        }
+        storage.set_small_tx_count(subject_id, 3);
 
         let event = test_event(5000); // 4th small tx
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // 4 <= 5, should not trigger
     }
 
-    #[test]
-    fn test_at_count_threshold() {
+    #[tokio::test]
+    async fn test_at_count_threshold() {
         let rule = StructuringRule::new(
             "R5_STRUCT".to_string(),
             Decision::Review,
@@ -130,20 +140,19 @@ mod tests {
             5,
         );
 
-        let mut state = UserState::new("U1".to_string());
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
         // Add 4 small transactions
-        for _ in 0..4 {
-            state.add_tx(TxEntry::new(Utc::now(), Decimal::new(5000, 0)));
-        }
+        storage.set_small_tx_count(subject_id, 4);
 
         let event = test_event(5000); // 5th small tx
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // 5 == 5, at threshold but not over
     }
 
-    #[test]
-    fn test_over_count_threshold() {
+    #[tokio::test]
+    async fn test_over_count_threshold() {
         let rule = StructuringRule::new(
             "R5_STRUCT".to_string(),
             Decision::Review,
@@ -151,14 +160,13 @@ mod tests {
             5,
         );
 
-        let mut state = UserState::new("U1".to_string());
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
         // Add 5 small transactions
-        for _ in 0..5 {
-            state.add_tx(TxEntry::new(Utc::now(), Decimal::new(5000, 0)));
-        }
+        storage.set_small_tx_count(subject_id, 5);
 
         let event = test_event(5000); // 6th small tx
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(result.hit);
         assert_eq!(result.decision, Decision::Review);
@@ -167,8 +175,8 @@ mod tests {
         assert_eq!(ev.limit, Some("5".to_string()));
     }
 
-    #[test]
-    fn test_large_tx_not_counted() {
+    #[tokio::test]
+    async fn test_large_tx_not_counted() {
         let rule = StructuringRule::new(
             "R5_STRUCT".to_string(),
             Decision::Review,
@@ -176,21 +184,20 @@ mod tests {
             5,
         );
 
-        let mut state = UserState::new("U1".to_string());
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
         // Add 5 small transactions
-        for _ in 0..5 {
-            state.add_tx(TxEntry::new(Utc::now(), Decimal::new(5000, 0)));
-        }
+        storage.set_small_tx_count(subject_id, 5);
 
         // Large transaction ($20k >= $10k threshold)
         let event = test_event(20000);
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // Large tx not counted, still at 5
     }
 
-    #[test]
-    fn test_mixed_transactions() {
+    #[tokio::test]
+    async fn test_mixed_transactions() {
         let rule = StructuringRule::new(
             "R5_STRUCT".to_string(),
             Decision::Review,
@@ -198,17 +205,16 @@ mod tests {
             5,
         );
 
-        let mut state = UserState::new("U1".to_string());
-        // Mix of small and large
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(5000, 0)));  // small
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(15000, 0))); // large
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(8000, 0)));  // small
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(20000, 0))); // large
-        state.add_tx(TxEntry::new(Utc::now(), Decimal::new(9000, 0)));  // small
+        let storage = MockStorage::new();
+        let subject_id = Uuid::new_v4();
+        // Mix of small and large - storage counts only small transactions
+        // 3 small transactions: $5k, $8k, $9k (< $10k threshold)
+        // 2 large transactions: $15k, $20k (>= $10k threshold) not counted
+        storage.set_small_tx_count(subject_id, 3);
 
         // Another small tx (4th small)
         let event = test_event(5000);
-        let result = rule.evaluate(&event, &state);
+        let result = rule.evaluate(&event, subject_id, &storage).await.unwrap();
 
         assert!(!result.hit); // Only 4 small txs
     }
