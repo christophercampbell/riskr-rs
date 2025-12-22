@@ -59,6 +59,22 @@ pub struct Config {
     /// Graceful shutdown timeout in seconds
     #[arg(long, default_value = "30", env = "RISKR_SHUTDOWN_TIMEOUT_SECS")]
     pub shutdown_timeout_secs: u64,
+
+    /// PostgreSQL connection string
+    #[arg(long, env = "RISKR_DATABASE_URL")]
+    pub database_url: Option<String>,
+
+    /// Minimum database pool connections
+    #[arg(long, default_value = "2", env = "RISKR_DB_POOL_MIN")]
+    pub db_pool_min: u32,
+
+    /// Maximum database pool connections
+    #[arg(long, default_value = "10", env = "RISKR_DB_POOL_MAX")]
+    pub db_pool_max: u32,
+
+    /// Run database migrations on startup
+    #[arg(long, default_value = "false", env = "RISKR_RUN_MIGRATIONS")]
+    pub run_migrations: bool,
 }
 
 impl Config {
@@ -94,6 +110,10 @@ impl Default for Config {
             actor_idle_secs: 3600,
             graceful_shutdown: true,
             shutdown_timeout_secs: 30,
+            database_url: None,
+            db_pool_min: 2,
+            db_pool_max: 10,
+            run_migrations: false,
         }
     }
 }
