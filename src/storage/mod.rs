@@ -1,6 +1,8 @@
 // src/storage/mod.rs
+pub mod mock;
 pub mod traits;
 
+pub use mock::MockStorage;
 pub use traits::{DecisionRecord, Storage, TransactionRecord};
 
 // Keep old modules for now (will remove later)
