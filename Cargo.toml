@@ -60,6 +60,7 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
+async-trait = "0.1"
 
 # Storage (legacy - to be removed when old storage modules deleted)
 crc32fast = "1.4"
