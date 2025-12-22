@@ -13,7 +13,7 @@ Financial institutions need to screen cryptocurrency transactions against compli
 
 ### Solution
 
-A dual-phase architecture separating fast stateless rules from stateful rules that maintain per-user rolling windows. Uses sharded actor pools and bloom filters to achieve sub-100ms decision latency at scale.
+A dual-phase architecture separating fast stateless rules from stateful rules that maintain per-user rolling windows. Uses striped locking and bloom filters to achieve sub-100ms decision latency.
 
 ---
 
@@ -50,11 +50,11 @@ A dual-phase architecture separating fast stateless rules from stateful rules th
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Actor Pool                               │
-│                      (64 shards)                                │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐         ┌─────────┐       │
-│  │ Shard 0 │ │ Shard 1 │ │ Shard 2 │   ...   │Shard 63 │       │
-│  │ Users   │ │ Users   │ │ Users   │         │ Users   │       │
-│  └─────────┘ └─────────┘ └─────────┘         └─────────┘       │
+│                   (64 lock stripes)                             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐       ┌──────────┐     │
+│  │ Stripe 0 │ │ Stripe 1 │ │ Stripe 2 │  ...  │ Stripe 63│     │
+│  │  Users   │ │  Users   │ │  Users   │       │  Users   │     │
+│  └──────────┘ └──────────┘ └──────────┘       └──────────┘     │
 └─────────────────────────────────────────────────────────────────┘
                                  │
                                  ▼
@@ -99,7 +99,7 @@ Each user has one `UserActor` managing their transaction history:
 
 ```
 ActorPool
-├── 64 shards (hash-distributed by user_id)
+├── 64 lock stripes (hash-distributed by user_id)
 │   └── RwLock<HashMap<user_id, Arc<Mutex<UserActor>>>>
 │
 UserActor
@@ -111,7 +111,9 @@ UserActor
 - Read lock for actor lookup (fast path)
 - Write lock only when creating new actor
 - Per-actor mutex for state mutations
-- Minimal cross-user contention
+- Striped locking reduces contention (threads only block if their users hash to the same stripe)
+
+**Important:** Lock stripes reduce contention *within a single process*. They are not distributed partitions. Each instance maintains all stripes locally.
 
 ### Policy Management (`src/policy/`)
 
@@ -143,7 +145,7 @@ Policies reload without restart. Actor state is preserved; only rules change.
    └── Short-circuit if REJECT_FATAL
 
 3. Phase 2: Streaming Rules
-   ├── Hash user_id → shard index
+   ├── Hash user_id → stripe index
    ├── Get or create UserActor
    ├── Lock actor, prune expired entries
    ├── Evaluate daily volume
@@ -186,12 +188,13 @@ Stateless rules run first because:
 - No state access needed for common rejections
 - Reduces load on actor pool
 
-### 64-Shard Actor Pool
+### 64 Lock Stripes
 
-Why 64 shards:
-- Balances memory overhead vs. contention
+Why 64 stripes:
+- Reduces lock contention ~64x vs. single lock
+- Balances memory overhead vs. contention reduction
 - Hash distribution spreads load evenly
-- Matches typical server core counts
+- Not for distribution—all stripes are local to each process
 
 ### Bloom Filter for OFAC
 
@@ -429,12 +432,17 @@ impl StreamingRule for MyStreamingRule {
 - **CPU:** Scales linearly with cores
 - **Storage:** Optional WAL/snapshots
 
-### Scaling
+### Scaling Considerations
 
-- Stateless design allows horizontal scaling
-- Each instance maintains independent actor pool
-- No inter-instance communication required
-- Shared policy/sanctions lists (read-only)
+Each instance maintains **independent in-memory state**. Running multiple instances requires one of:
+
+| Approach | Description |
+|----------|-------------|
+| **Sticky sessions** | Route requests by user_id hash to consistent instance |
+| **Shared state** | External store (Redis/database) for user state |
+| **Single instance** | Simplest option for moderate load |
+
+Without sticky routing, streaming rules (volume limits, structuring detection) would see fragmented user history across instances.
 
 ### Health Checks
 

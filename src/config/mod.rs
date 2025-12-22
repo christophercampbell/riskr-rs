@@ -44,9 +44,9 @@ pub struct Config {
     #[arg(long, default_value = "1000", env = "RISKR_MAX_ENTRIES_PER_USER")]
     pub max_entries_per_user: usize,
 
-    /// Actor pool shard count (power of 2 recommended)
-    #[arg(long, default_value = "64", env = "RISKR_SHARD_COUNT")]
-    pub shard_count: usize,
+    /// Actor pool stripe count for lock contention reduction (power of 2 recommended)
+    #[arg(long, default_value = "64", env = "RISKR_STRIPE_COUNT")]
+    pub stripe_count: usize,
 
     /// Idle actor eviction timeout in seconds
     #[arg(long, default_value = "3600", env = "RISKR_ACTOR_IDLE_SECS")]
@@ -90,7 +90,7 @@ impl Default for Config {
             latency_budget_ms: 100,
             log_level: "info".to_string(),
             max_entries_per_user: 1000,
-            shard_count: 64,
+            stripe_count: 64,
             actor_idle_secs: 3600,
             graceful_shutdown: true,
             shutdown_timeout_secs: 30,
@@ -108,7 +108,7 @@ mod tests {
 
         assert_eq!(config.listen_addr, "0.0.0.0:8080");
         assert_eq!(config.latency_budget_ms, 100);
-        assert_eq!(config.shard_count, 64);
+        assert_eq!(config.stripe_count, 64);
     }
 
     #[test]

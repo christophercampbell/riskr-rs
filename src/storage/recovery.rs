@@ -147,7 +147,7 @@ impl StateRecovery {
         let states = HashMap::new();
 
         // This is a simplified approach - in production you'd want
-        // to iterate through shards more efficiently
+        // to iterate through stripes more efficiently
         let pool_stats = pool.stats();
         info!("Creating snapshot of {} users", pool_stats.total_actors);
 

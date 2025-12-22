@@ -11,7 +11,7 @@ use super::state::{TxEntry, UserState};
 ///
 /// Each user has their own actor that owns their rolling window state.
 /// This ensures no shared mutable state between users and enables
-/// lock-free access patterns within a shard.
+/// lock-free access patterns within a stripe.
 pub struct UserActor {
     /// The user's rolling window state
     state: UserState,
