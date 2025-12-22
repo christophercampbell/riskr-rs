@@ -1,0 +1,83 @@
+[package]
+name = "riskr"
+version = "0.1.0"
+edition = "2021"
+authors = ["Christopher Campbell"]
+description = "High-performance compliance-aware risk engine for cryptocurrency transactions"
+license = "MIT"
+repository = "https://github.com/christophercampbell/riskr-rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full", "parking_lot"] }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.5", features = ["timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Decimal arithmetic (no floating point for money)
+rust_decimal = { version = "1.36", features = ["serde", "serde-with-str"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hashing and bloom filters
+ahash = "0.8"
+bloomfilter = "1.0"
+
+# Small vector optimization
+smallvec = { version = "1.13", features = ["serde"] }
+
+# Parking lot for faster mutexes
+parking_lot = "0.12"
+
+# Configuration
+config = "0.14"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Unique identifiers
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# CRC for WAL checksums
+crc32fast = "1.4"
+
+# Memory mapping for efficient file I/O
+memmap2 = "0.9"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+tokio-test = "0.4"
+tempfile = "3.14"
+reqwest = { version = "0.12", features = ["json"] }
+
+[[bench]]
+name = "decision_latency"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+debug = true

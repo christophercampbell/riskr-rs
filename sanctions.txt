@@ -1,0 +1,5 @@
+# OFAC sanctioned addresses (example data)
+# One address per line, lowercase hex
+0x0000000000000000000000000000000000000000
+0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+0x1234567890abcdef1234567890abcdef12345678
