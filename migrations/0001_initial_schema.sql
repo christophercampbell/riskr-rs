@@ -1,4 +1,4 @@
--- migrations/20241222_001_initial_schema.sql
+-- migrations/0001_initial_schema.sql
 
 -- Subjects (users/accounts)
 CREATE TABLE subjects (

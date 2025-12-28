@@ -164,7 +164,7 @@ src/
 └── main.rs
 
 migrations/
-├── 20241222_001_initial_schema.sql
+├── 0001_initial_schema.sql
 
 docker/
 └── docker-compose.yml   # PostgreSQL for local dev

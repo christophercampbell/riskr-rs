@@ -43,7 +43,7 @@ git commit -m "deps: add sqlx, remove wal-related crates"
 ## Task 2: Create Database Schema Migration
 
 **Files:**
-- Create: `migrations/20241222_001_initial_schema.sql`
+- Create: `migrations/0001_initial_schema.sql`
 
 **Step 1: Create migrations directory**
 
@@ -52,7 +52,7 @@ Run: `mkdir -p migrations`
 **Step 2: Write the migration file**
 
 ```sql
--- migrations/20241222_001_initial_schema.sql
+-- migrations/0001_initial_schema.sql
 
 -- Subjects (users/accounts)
 CREATE TABLE subjects (

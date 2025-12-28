@@ -13,7 +13,7 @@ Financial institutions need to screen cryptocurrency transactions against compli
 
 ### Solution
 
-A dual-phase architecture separating fast stateless rules from stateful rules that query rolling windows from PostgreSQL.
+A dual-phase architecture separating fast stateless rules from stateful rules that query rolling windows from the database.
 
 ---
 
