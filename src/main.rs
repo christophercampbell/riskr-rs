@@ -38,12 +38,8 @@ async fn main() -> anyhow::Result<()> {
     // Create storage backend
     let storage: Arc<dyn Storage> = if let Some(ref database_url) = config.database_url {
         info!("Connecting to PostgreSQL...");
-        let pg_storage = PostgresStorage::connect(
-            database_url,
-            config.db_pool_min,
-            config.db_pool_max,
-        )
-        .await?;
+        let pg_storage =
+            PostgresStorage::connect(database_url, config.db_pool_min, config.db_pool_max).await?;
 
         if config.run_migrations {
             info!("Running database migrations...");

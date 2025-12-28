@@ -98,7 +98,10 @@ mod tests {
     #[test]
     fn test_decision_max() {
         assert_eq!(Decision::Allow.max(Decision::HoldAuto), Decision::HoldAuto);
-        assert_eq!(Decision::RejectFatal.max(Decision::Allow), Decision::RejectFatal);
+        assert_eq!(
+            Decision::RejectFatal.max(Decision::Allow),
+            Decision::RejectFatal
+        );
         assert_eq!(Decision::Review.max(Decision::Review), Decision::Review);
     }
 

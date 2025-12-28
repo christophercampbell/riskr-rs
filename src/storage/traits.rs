@@ -33,13 +33,25 @@ pub struct DecisionRecord {
 #[async_trait]
 pub trait Storage: Send + Sync {
     // Subjects
-    async fn get_subject_by_user_id(&self, user_id: &str) -> anyhow::Result<Option<(Uuid, Subject)>>;
+    async fn get_subject_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Option<(Uuid, Subject)>>;
     async fn upsert_subject(&self, subject: &Subject) -> anyhow::Result<Uuid>;
 
     // Transactions (for streaming rules)
     async fn record_transaction(&self, tx: &TransactionRecord) -> anyhow::Result<Uuid>;
-    async fn get_rolling_volume(&self, subject_id: Uuid, window: Duration) -> anyhow::Result<Decimal>;
-    async fn get_small_tx_count(&self, subject_id: Uuid, window: Duration, threshold: Decimal) -> anyhow::Result<u32>;
+    async fn get_rolling_volume(
+        &self,
+        subject_id: Uuid,
+        window: Duration,
+    ) -> anyhow::Result<Decimal>;
+    async fn get_small_tx_count(
+        &self,
+        subject_id: Uuid,
+        window: Duration,
+        threshold: Decimal,
+    ) -> anyhow::Result<u32>;
 
     // Sanctions
     async fn get_all_sanctions(&self) -> anyhow::Result<Vec<String>>;

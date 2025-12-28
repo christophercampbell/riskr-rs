@@ -47,7 +47,12 @@ impl InlineRule for KycCapRule {
         if usd_value > cap {
             return RuleResult::trigger(
                 self.action,
-                Evidence::with_limit(&self.id, "usd_value", usd_value.to_string(), cap.to_string()),
+                Evidence::with_limit(
+                    &self.id,
+                    "usd_value",
+                    usd_value.to_string(),
+                    cap.to_string(),
+                ),
             );
         }
 

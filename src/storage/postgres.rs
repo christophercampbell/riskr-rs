@@ -6,8 +6,8 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::domain::{Policy, Subject};
 use crate::domain::subject::{AccountId, Address, CountryCode, KycTier, UserId};
+use crate::domain::{Policy, Subject};
 
 use super::traits::{DecisionRecord, Storage, TransactionRecord};
 
@@ -18,7 +18,11 @@ pub struct PostgresStorage {
 
 impl PostgresStorage {
     /// Create a new PostgresStorage instance with a connection pool.
-    pub async fn connect(database_url: &str, min_connections: u32, max_connections: u32) -> anyhow::Result<Self> {
+    pub async fn connect(
+        database_url: &str,
+        min_connections: u32,
+        max_connections: u32,
+    ) -> anyhow::Result<Self> {
         let pool = PgPoolOptions::new()
             .min_connections(min_connections)
             .max_connections(max_connections)
@@ -30,9 +34,7 @@ impl PostgresStorage {
 
     /// Run database migrations.
     pub async fn run_migrations(&self) -> anyhow::Result<()> {
-        sqlx::migrate!("./migrations")
-            .run(&self.pool)
-            .await?;
+        sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())
     }
 
@@ -44,7 +46,10 @@ impl PostgresStorage {
 
 #[async_trait]
 impl Storage for PostgresStorage {
-    async fn get_subject_by_user_id(&self, user_id: &str) -> anyhow::Result<Option<(Uuid, Subject)>> {
+    async fn get_subject_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Option<(Uuid, Subject)>> {
         let row = sqlx::query(
             r#"
             SELECT id, user_id, account_id, kyc_level, geo_iso
@@ -155,7 +160,11 @@ impl Storage for PostgresStorage {
         Ok(tx_id)
     }
 
-    async fn get_rolling_volume(&self, subject_id: Uuid, window: Duration) -> anyhow::Result<Decimal> {
+    async fn get_rolling_volume(
+        &self,
+        subject_id: Uuid,
+        window: Duration,
+    ) -> anyhow::Result<Decimal> {
         let window_secs = window.num_seconds();
 
         let volume: Option<Decimal> = sqlx::query_scalar(
@@ -174,7 +183,12 @@ impl Storage for PostgresStorage {
         Ok(volume.unwrap_or(Decimal::ZERO))
     }
 
-    async fn get_small_tx_count(&self, subject_id: Uuid, window: Duration, threshold: Decimal) -> anyhow::Result<u32> {
+    async fn get_small_tx_count(
+        &self,
+        subject_id: Uuid,
+        window: Duration,
+        threshold: Decimal,
+    ) -> anyhow::Result<u32> {
         let window_secs = window.num_seconds();
 
         let count: i64 = sqlx::query_scalar(

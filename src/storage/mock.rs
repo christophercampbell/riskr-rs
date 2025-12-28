@@ -68,7 +68,10 @@ impl MockStorage {
 
 #[async_trait]
 impl Storage for MockStorage {
-    async fn get_subject_by_user_id(&self, user_id: &str) -> anyhow::Result<Option<(Uuid, Subject)>> {
+    async fn get_subject_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Option<(Uuid, Subject)>> {
         Ok(self.subjects.lock().get(user_id).cloned())
     }
 
@@ -92,12 +95,31 @@ impl Storage for MockStorage {
         Ok(Uuid::new_v4())
     }
 
-    async fn get_rolling_volume(&self, subject_id: Uuid, _window: Duration) -> anyhow::Result<Decimal> {
-        Ok(self.rolling_volumes.lock().get(&subject_id).copied().unwrap_or(Decimal::ZERO))
+    async fn get_rolling_volume(
+        &self,
+        subject_id: Uuid,
+        _window: Duration,
+    ) -> anyhow::Result<Decimal> {
+        Ok(self
+            .rolling_volumes
+            .lock()
+            .get(&subject_id)
+            .copied()
+            .unwrap_or(Decimal::ZERO))
     }
 
-    async fn get_small_tx_count(&self, subject_id: Uuid, _window: Duration, _threshold: Decimal) -> anyhow::Result<u32> {
-        Ok(self.small_tx_counts.lock().get(&subject_id).copied().unwrap_or(0))
+    async fn get_small_tx_count(
+        &self,
+        subject_id: Uuid,
+        _window: Duration,
+        _threshold: Decimal,
+    ) -> anyhow::Result<u32> {
+        Ok(self
+            .small_tx_counts
+            .lock()
+            .get(&subject_id)
+            .copied()
+            .unwrap_or(0))
     }
 
     async fn get_all_sanctions(&self) -> anyhow::Result<Vec<String>> {
@@ -146,7 +168,8 @@ mod tests {
         let subject = test_subject();
 
         let id = storage.upsert_subject(&subject).await.unwrap();
-        let (retrieved_id, retrieved) = storage.get_subject_by_user_id("U1").await.unwrap().unwrap();
+        let (retrieved_id, retrieved) =
+            storage.get_subject_by_user_id("U1").await.unwrap().unwrap();
 
         assert_eq!(id, retrieved_id);
         assert_eq!(retrieved.user_id.as_str(), "U1");
@@ -169,7 +192,10 @@ mod tests {
 
         storage.set_rolling_volume(subject_id, Decimal::new(45000, 0));
 
-        let volume = storage.get_rolling_volume(subject_id, Duration::hours(24)).await.unwrap();
+        let volume = storage
+            .get_rolling_volume(subject_id, Duration::hours(24))
+            .await
+            .unwrap();
         assert_eq!(volume, Decimal::new(45000, 0));
     }
 }

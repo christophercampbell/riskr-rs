@@ -24,7 +24,12 @@ pub struct StructuringRule {
 
 impl StructuringRule {
     /// Create a new structuring detection rule.
-    pub fn new(id: String, action: Decision, amount_threshold: Decimal, count_threshold: u32) -> Self {
+    pub fn new(
+        id: String,
+        action: Decision,
+        amount_threshold: Decimal,
+        count_threshold: u32,
+    ) -> Self {
         StructuringRule {
             id,
             action,
@@ -117,7 +122,7 @@ mod tests {
             "R5_STRUCT".to_string(),
             Decision::Review,
             Decimal::new(10000, 0), // $10k threshold
-            5,                       // 5 count threshold
+            5,                      // 5 count threshold
         );
 
         let storage = MockStorage::new();

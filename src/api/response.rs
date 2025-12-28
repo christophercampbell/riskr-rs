@@ -25,11 +25,7 @@ pub struct DecisionResponse {
 
 impl DecisionResponse {
     /// Create a new decision response.
-    pub fn new(
-        decision: Decision,
-        policy_version: String,
-        evidence: Vec<Evidence>,
-    ) -> Self {
+    pub fn new(decision: Decision, policy_version: String, evidence: Vec<Evidence>) -> Self {
         let decision_code = if evidence.is_empty() {
             "OK".to_string()
         } else {

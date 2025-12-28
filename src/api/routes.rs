@@ -114,7 +114,10 @@ async fn handle_decision(
 
     // Phase 3: Evaluate streaming rules (stateful)
     for rule in &ruleset.streaming {
-        let result = match rule.evaluate(&event, subject_id, state.storage.as_ref()).await {
+        let result = match rule
+            .evaluate(&event, subject_id, state.storage.as_ref())
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 warn!(user_id = user_id, rule_id = rule.id(), error = %e, "Failed to evaluate streaming rule");
@@ -253,7 +256,10 @@ riskr_streaming_rules {}
 
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         metrics,
     )
 }

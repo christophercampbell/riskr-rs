@@ -47,10 +47,7 @@ impl InlineRule for JurisdictionRule {
         let country = event.subject.geo_iso.as_str();
 
         if self.is_blocked(country) {
-            return RuleResult::trigger(
-                self.action,
-                Evidence::new(&self.id, "geo_iso", country),
-            );
+            return RuleResult::trigger(self.action, Evidence::new(&self.id, "geo_iso", country));
         }
 
         RuleResult::allow()
@@ -93,7 +90,11 @@ mod tests {
     #[test]
     fn test_allowed_country() {
         let blocked = HashSet::from(["IR".to_string(), "KP".to_string()]);
-        let rule = JurisdictionRule::new("R2_JURISDICTION".to_string(), Decision::RejectFatal, blocked);
+        let rule = JurisdictionRule::new(
+            "R2_JURISDICTION".to_string(),
+            Decision::RejectFatal,
+            blocked,
+        );
 
         let event = test_event("US");
         let result = rule.evaluate(&event);
@@ -105,7 +106,11 @@ mod tests {
     #[test]
     fn test_blocked_country() {
         let blocked = HashSet::from(["IR".to_string(), "KP".to_string()]);
-        let rule = JurisdictionRule::new("R2_JURISDICTION".to_string(), Decision::RejectFatal, blocked);
+        let rule = JurisdictionRule::new(
+            "R2_JURISDICTION".to_string(),
+            Decision::RejectFatal,
+            blocked,
+        );
 
         let event = test_event("IR");
         let result = rule.evaluate(&event);
@@ -118,7 +123,11 @@ mod tests {
     #[test]
     fn test_blocked_country_lowercase() {
         let blocked = HashSet::from(["IR".to_string()]);
-        let rule = JurisdictionRule::new("R2_JURISDICTION".to_string(), Decision::RejectFatal, blocked);
+        let rule = JurisdictionRule::new(
+            "R2_JURISDICTION".to_string(),
+            Decision::RejectFatal,
+            blocked,
+        );
 
         let event = test_event("ir"); // lowercase input
         let result = rule.evaluate(&event);
@@ -129,7 +138,11 @@ mod tests {
     #[test]
     fn test_empty_country() {
         let blocked = HashSet::from(["IR".to_string()]);
-        let rule = JurisdictionRule::new("R2_JURISDICTION".to_string(), Decision::RejectFatal, blocked);
+        let rule = JurisdictionRule::new(
+            "R2_JURISDICTION".to_string(),
+            Decision::RejectFatal,
+            blocked,
+        );
 
         let event = test_event("");
         let result = rule.evaluate(&event);

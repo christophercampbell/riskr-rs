@@ -94,8 +94,7 @@ impl DecisionRequest {
             direction,
             asset: Asset::new(&self.tx.asset),
             amount: self.tx.amount.clone(),
-            usd_value: Decimal::from_f64_retain(self.tx.usd_value)
-                .unwrap_or(Decimal::ZERO),
+            usd_value: Decimal::from_f64_retain(self.tx.usd_value).unwrap_or(Decimal::ZERO),
             confirmations: 0,
             max_finality_depth: 0,
         }

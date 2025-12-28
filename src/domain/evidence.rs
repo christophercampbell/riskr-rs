@@ -21,7 +21,11 @@ pub struct Evidence {
 
 impl Evidence {
     /// Create evidence for a rule hit.
-    pub fn new(rule_id: impl Into<String>, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new(
+        rule_id: impl Into<String>,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
         Evidence {
             rule_id: rule_id.into(),
             key: key.into(),
@@ -118,10 +122,7 @@ mod tests {
     #[test]
     fn test_rule_result_combine() {
         let allow = RuleResult::allow();
-        let hold = RuleResult::trigger(
-            Decision::HoldAuto,
-            Evidence::new("R3", "test", "value"),
-        );
+        let hold = RuleResult::trigger(Decision::HoldAuto, Evidence::new("R3", "test", "value"));
 
         let combined = allow.combine(hold.clone());
         assert!(combined.hit);
