@@ -202,8 +202,6 @@ impl<'a> Drop for TimingGuard<'a> {
 mod tests {
     use super::*;
     use crate::domain::Decision;
-    use std::thread::sleep;
-    use std::time::Duration;
 
     #[test]
     fn test_record_decision() {

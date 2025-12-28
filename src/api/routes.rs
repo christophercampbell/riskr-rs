@@ -10,24 +10,20 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use crate::actor::pool::ActorPool;
 use crate::domain::Decision;
 use crate::rules::RuleSet;
-use crate::storage::wal::WalWriter;
+use crate::storage::{DecisionRecord, Storage, TransactionRecord};
 
 use super::request::DecisionRequest;
 use super::response::{DecisionResponse, ErrorResponse, HealthResponse, ReadyResponse};
 
 /// Shared application state.
 pub struct AppState {
-    /// Actor pool for user state management
-    pub actor_pool: Arc<ActorPool>,
+    /// Storage backend for persistence
+    pub storage: Arc<dyn Storage>,
 
     /// Current rule set (updated via watch channel)
     pub ruleset_rx: watch::Receiver<Arc<RuleSet>>,
-
-    /// WAL writer for durability
-    pub wal_writer: Option<Arc<parking_lot::Mutex<WalWriter>>>,
 
     /// Application start time
     pub start_time: Instant,
@@ -100,12 +96,32 @@ async fn handle_decision(
         );
     }
 
-    // Phase 2: Evaluate streaming rules (stateful)
-    let actor = state.actor_pool.get_or_create(user_id);
-    let actor_guard = actor.lock();
+    // Phase 2: Get subject_id for stateful rules
+    let subject_id = match state.storage.upsert_subject(&event.subject).await {
+        Ok(id) => id,
+        Err(e) => {
+            warn!(user_id = user_id, error = %e, "Failed to upsert subject");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(DecisionResponse::new(
+                    Decision::Allow, // Fail open on storage errors
+                    ruleset.policy_version.clone(),
+                    evidence,
+                )),
+            );
+        }
+    };
 
+    // Phase 3: Evaluate streaming rules (stateful)
     for rule in &ruleset.streaming {
-        let result = rule.evaluate(&event, actor_guard.state());
+        let result = match rule.evaluate(&event, subject_id, state.storage.as_ref()).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(user_id = user_id, rule_id = rule.id(), error = %e, "Failed to evaluate streaming rule");
+                continue; // Skip this rule on error
+            }
+        };
+
         if result.hit {
             if result.decision > final_decision {
                 final_decision = result.decision;
@@ -116,30 +132,36 @@ async fn handle_decision(
         }
     }
 
-    // Update actor state with this transaction
-    let _ = actor_guard.state().clone(); // Touch to update last_access
-    drop(actor_guard);
+    // Phase 4: Record transaction
+    let tx_record = TransactionRecord {
+        subject_id,
+        tx_type: format!("{:?}", event.direction),
+        asset: event.asset.0.clone(),
+        amount: event.amount.parse().unwrap_or_default(),
+        usd_value: event.usd_value,
+        dest_address: None, // Could extract from event if needed
+    };
 
-    // Get a fresh lock to call evaluate which updates state
-    let actor = state.actor_pool.get_or_create(user_id);
-    let mut actor_guard = actor.lock();
+    if let Err(e) = state.storage.record_transaction(&tx_record).await {
+        warn!(user_id = user_id, error = %e, "Failed to record transaction");
+    }
 
-    // Re-evaluate to update state (this is a bit redundant but ensures state is updated)
-    // In a production system, we'd refactor to separate state update from evaluation
-    let _ = actor_guard.evaluate(&event);
-    drop(actor_guard);
+    // Phase 5: Record decision
+    let decision_record = DecisionRecord {
+        subject_id: Some(subject_id),
+        request: serde_json::to_value(&req).unwrap_or(serde_json::Value::Null),
+        decision: final_decision,
+        decision_code: evidence
+            .first()
+            .map(|e| e.rule_id.clone())
+            .unwrap_or_else(|| "OK".to_string()),
+        policy_version: ruleset.policy_version.clone(),
+        evidence: evidence.clone(),
+        latency_ms: start.elapsed().as_millis() as u32,
+    };
 
-    // Write to WAL for durability
-    if let Some(ref wal) = state.wal_writer {
-        let entry = crate::storage::wal::WalEntry::transaction(
-            user_id.to_string(),
-            event.occurred_at,
-            event.usd_value,
-        );
-
-        if let Err(e) = wal.lock().append(&entry) {
-            warn!(user_id = user_id, error = %e, "Failed to write to WAL");
-        }
+    if let Err(e) = state.storage.record_decision(&decision_record).await {
+        warn!(user_id = user_id, error = %e, "Failed to record decision");
     }
 
     // Check latency budget
@@ -209,19 +231,10 @@ async fn handle_ready(State(state): State<Arc<AppState>>) -> axum::response::Res
 
 /// Metrics endpoint (Prometheus format).
 async fn handle_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let pool_stats = state.actor_pool.stats();
     let ruleset = state.ruleset_rx.borrow();
 
     let metrics = format!(
-        r#"# HELP riskr_actors_total Total number of user actors
-# TYPE riskr_actors_total gauge
-riskr_actors_total {}
-
-# HELP riskr_entries_total Total transaction entries across all actors
-# TYPE riskr_entries_total gauge
-riskr_entries_total {}
-
-# HELP riskr_uptime_seconds Application uptime in seconds
+        r#"# HELP riskr_uptime_seconds Application uptime in seconds
 # TYPE riskr_uptime_seconds counter
 riskr_uptime_seconds {}
 
@@ -233,8 +246,6 @@ riskr_inline_rules {}
 # TYPE riskr_streaming_rules gauge
 riskr_streaming_rules {}
 "#,
-        pool_stats.total_actors,
-        pool_stats.total_entries,
         state.start_time.elapsed().as_secs(),
         ruleset.inline.len(),
         ruleset.streaming.len(),
@@ -251,6 +262,7 @@ riskr_streaming_rules {}
 mod tests {
     use super::*;
     use crate::rules::{DailyVolumeRule, OfacRule};
+    use crate::storage::MockStorage;
     use rust_decimal::Decimal;
     use std::collections::HashSet;
 
@@ -277,13 +289,12 @@ mod tests {
             policy_version: "test-v1".to_string(),
         });
 
-        let (tx, rx) = watch::channel(ruleset);
-        let pool = Arc::new(ActorPool::new(streaming_rules));
+        let (_tx, rx) = watch::channel(ruleset);
+        let storage = Arc::new(MockStorage::new()) as Arc<dyn Storage>;
 
         Arc::new(AppState {
-            actor_pool: pool,
+            storage,
             ruleset_rx: rx,
-            wal_writer: None,
             start_time: Instant::now(),
             version: "0.1.0-test".to_string(),
             latency_budget_ms: 100,

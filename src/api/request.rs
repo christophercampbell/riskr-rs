@@ -1,5 +1,5 @@
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::domain::event::{Asset, Chain, Direction, EventId, TxEvent, SCHEMA_VERSION};
@@ -7,7 +7,7 @@ use crate::domain::subject::{AccountId, Address, CountryCode, KycTier, Subject, 
 use chrono::Utc;
 
 /// Request for a decision check.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DecisionRequest {
     /// Subject information
     pub subject: SubjectRequest,
@@ -21,7 +21,7 @@ pub struct DecisionRequest {
 }
 
 /// Subject portion of the request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SubjectRequest {
     pub user_id: String,
     pub account_id: String,
@@ -33,7 +33,7 @@ pub struct SubjectRequest {
 }
 
 /// Transaction portion of the request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TxRequest {
     /// Transaction type (withdraw, deposit, etc.)
     #[serde(rename = "type")]

@@ -4,14 +4,13 @@ use std::time::Instant;
 
 use clap::Parser;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::info;
 
-use riskr::actor::pool::ActorPool;
 use riskr::api::routes::{create_router, AppState};
 use riskr::config::Config;
 use riskr::observability::init_tracing;
 use riskr::policy::{PolicyLoader, PolicyWatcher};
-use riskr::storage::wal::WalWriter;
+use riskr::storage::{MockStorage, PostgresStorage, Storage};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,34 +35,32 @@ async fn main() -> anyhow::Result<()> {
     let watcher = PolicyWatcher::new(loader, config.policy_reload_interval());
     let (ruleset_rx, policy_handle) = watcher.start();
 
-    // Get initial ruleset for actor pool
-    let initial_ruleset = ruleset_rx.borrow().clone();
+    // Create storage backend
+    let storage: Arc<dyn Storage> = if let Some(ref database_url) = config.database_url {
+        info!("Connecting to PostgreSQL...");
+        let pg_storage = PostgresStorage::connect(
+            database_url,
+            config.db_pool_min,
+            config.db_pool_max,
+        )
+        .await?;
 
-    // Create actor pool
-    let actor_pool = Arc::new(ActorPool::new(initial_ruleset.streaming.clone()));
-
-    // Create WAL writer (optional)
-    let wal_writer = if let Some(ref wal_path) = config.wal_path {
-        match WalWriter::open(wal_path) {
-            Ok(writer) => {
-                info!(path = %wal_path.display(), "WAL enabled");
-                Some(Arc::new(parking_lot::Mutex::new(writer)))
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to create WAL writer, continuing without WAL");
-                None
-            }
+        if config.run_migrations {
+            info!("Running database migrations...");
+            pg_storage.run_migrations().await?;
         }
+
+        info!("PostgreSQL storage initialized");
+        Arc::new(pg_storage)
     } else {
-        info!("WAL disabled (no path configured)");
-        None
+        info!("No database configured, using in-memory mock storage");
+        Arc::new(MockStorage::new())
     };
 
     // Create application state
     let state = Arc::new(AppState {
-        actor_pool,
+        storage,
         ruleset_rx,
-        wal_writer,
         start_time: Instant::now(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         latency_budget_ms: config.latency_budget_ms,

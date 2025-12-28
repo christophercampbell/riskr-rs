@@ -88,7 +88,6 @@ mod tests {
     use crate::domain::subject::{AccountId, Address, CountryCode, KycTier, Subject, UserId};
     use chrono::Utc;
     use rust_decimal::Decimal;
-    use smallvec::smallvec;
 
     fn test_event(addresses: Vec<&str>) -> TxEvent {
         TxEvent {

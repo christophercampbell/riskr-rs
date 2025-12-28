@@ -11,21 +11,28 @@ riskr-rs evaluates transactions against configurable compliance rules in two pha
 
 Decisions follow severity ordering: `Allow < SoftDenyRetry < HoldAuto < Review < RejectFatal`
 
+State is persisted to PostgreSQL, making the service stateless and horizontally scalable.
+
 ## Quick Start
 
 ```bash
 # Build
 cargo build --release
 
-# Run with default config
+# Run with PostgreSQL
+./target/release/riskr \
+  --database-url postgres://user:pass@localhost/riskr \
+  --run-migrations
+
+# Run without database (in-memory mock storage)
 ./target/release/riskr
 
-# Run with custom settings
+# Full configuration
 ./target/release/riskr \
   --listen-addr 0.0.0.0:8080 \
   --policy-path policy.yaml \
   --sanctions-path sanctions.txt \
-  --wal-path /var/lib/riskr/wal
+  --database-url postgres://localhost/riskr
 ```
 
 ## API
@@ -118,8 +125,10 @@ All options available via CLI flags or environment variables:
 | `--listen-addr` | `RISKR_LISTEN_ADDR` | `0.0.0.0:8080` | HTTP listen address |
 | `--policy-path` | `RISKR_POLICY_PATH` | `policy.yaml` | Policy file path |
 | `--sanctions-path` | `RISKR_SANCTIONS_PATH` | `sanctions.txt` | Sanctions list path |
-| `--wal-path` | `RISKR_WAL_PATH` | (disabled) | WAL directory |
-| `--snapshot-path` | `RISKR_SNAPSHOT_PATH` | (disabled) | Snapshot directory |
+| `--database-url` | `RISKR_DATABASE_URL` | (disabled) | PostgreSQL connection string |
+| `--db-pool-min` | `RISKR_DB_POOL_MIN` | `2` | Min database connections |
+| `--db-pool-max` | `RISKR_DB_POOL_MAX` | `10` | Max database connections |
+| `--run-migrations` | `RISKR_RUN_MIGRATIONS` | `false` | Run migrations on startup |
 | `--policy-reload-secs` | `RISKR_POLICY_RELOAD_SECS` | `30` | Policy check interval |
 | `--latency-budget-ms` | `RISKR_LATENCY_BUDGET_MS` | `100` | Latency warning threshold |
 | `--log-level` | `RUST_LOG` | `info` | Log level |
@@ -192,26 +201,17 @@ rules:
 └─────────────────────┘       └──────────┬──────────┘
                                          │
                               ┌──────────▼──────────┐
-                              │    Actor Pool       │
-                              │   (64 shards)       │
-                              │                     │
-                              │  ┌───────────────┐  │
-                              │  │  User Actor   │  │
-                              │  │  (per user)   │  │
-                              │  │               │  │
-                              │  │ 24h window    │  │
-                              │  │ state         │  │
-                              │  └───────────────┘  │
-                              └──────────┬──────────┘
-                                         │
-                              ┌──────────▼──────────┐
                               │   Storage Layer     │
+                              │   (PostgreSQL)      │
                               │                     │
-                              │ • WAL (durability)  │
-                              │ • Snapshots         │
-                              │ • Recovery          │
+                              │ • subjects          │
+                              │ • transactions      │
+                              │ • decisions         │
+                              │ • sanctions         │
                               └─────────────────────┘
 ```
+
+The service is stateless—all state lives in PostgreSQL. This enables horizontal scaling without sticky sessions.
 
 ## Development
 

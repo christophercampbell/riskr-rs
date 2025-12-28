@@ -13,7 +13,7 @@ Financial institutions need to screen cryptocurrency transactions against compli
 
 ### Solution
 
-A dual-phase architecture separating fast stateless rules from stateful rules that maintain per-user rolling windows. Uses striped locking and bloom filters to achieve sub-100ms decision latency.
+A dual-phase architecture separating fast stateless rules from stateful rules that query rolling windows from PostgreSQL. The service is stateless—all state lives in the database, enabling horizontal scaling.
 
 ---
 
@@ -40,7 +40,7 @@ A dual-phase architecture separating fast stateless rules from stateful rules th
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Phase 2: Streaming Rules                      │
-│                      (Stateful, via Actor Pool)                 │
+│                      (Stateful, via Storage)                    │
 │  ┌──────────────────────┐  ┌─────────────────────────────────┐  │
 │  │   Daily USD Volume   │  │   Structuring Detection         │  │
 │  │   (24h rolling)      │  │   (small tx pattern)            │  │
@@ -49,12 +49,11 @@ A dual-phase architecture separating fast stateless rules from stateful rules th
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Actor Pool                               │
-│                   (64 lock stripes)                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐       ┌──────────┐     │
-│  │ Stripe 0 │ │ Stripe 1 │ │ Stripe 2 │  ...  │ Stripe 63│     │
-│  │  Users   │ │  Users   │ │  Users   │       │  Users   │     │
-│  └──────────┘ └──────────┘ └──────────┘       └──────────┘     │
+│                     Storage Layer                               │
+│                     (PostgreSQL)                                │
+│  ┌────────────┐ ┌──────────────┐ ┌───────────┐ ┌─────────────┐ │
+│  │  subjects  │ │ transactions │ │ decisions │ │  sanctions  │ │
+│  └────────────┘ └──────────────┘ └───────────┘ └─────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                                  │
                                  ▼
@@ -93,40 +92,56 @@ Rules return decisions; the engine takes the maximum severity across all rules.
 - `DailyVolumeRule` - Rolling 24-hour USD volume cap
 - `StructuringRule` - Detects patterns of small transactions
 
-### Actor System (`src/actor/`)
+### Storage Layer (`src/storage/`)
 
-Each user has one `UserActor` managing their transaction history:
+The storage layer abstracts persistence behind an async `Storage` trait:
 
+```rust
+#[async_trait]
+pub trait Storage: Send + Sync {
+    async fn upsert_subject(&self, subject: &Subject) -> Result<Uuid>;
+    async fn get_rolling_volume(&self, subject_id: Uuid, window: Duration) -> Result<Decimal>;
+    async fn get_small_tx_count(&self, subject_id: Uuid, window: Duration, threshold: Decimal) -> Result<u32>;
+    async fn record_transaction(&self, tx: &TransactionRecord) -> Result<Uuid>;
+    async fn record_decision(&self, decision: &DecisionRecord) -> Result<Uuid>;
+    // ...
+}
 ```
-ActorPool
-├── 64 lock stripes (hash-distributed by user_id)
-│   └── RwLock<HashMap<user_id, Arc<Mutex<UserActor>>>>
-│
-UserActor
-├── UserState (rolling 24h window, max 10k entries)
-└── streaming_rules reference
+
+**Implementations:**
+- `PostgresStorage` - Production storage with connection pooling (sqlx)
+- `MockStorage` - In-memory implementation for testing and development
+
+**Database Schema:**
 ```
+subjects          - User/account information
+├── id (UUID)
+├── user_id (unique)
+├── account_id
+├── kyc_level
+└── geo_iso
 
-**Concurrency model:**
-- Read lock for actor lookup (fast path)
-- Write lock only when creating new actor
-- Per-actor mutex for state mutations
-- Striped locking reduces contention (threads only block if their users hash to the same stripe)
+transactions      - Transaction history for rolling window queries
+├── id (UUID)
+├── subject_id (FK)
+├── usd_value
+├── created_at
+└── ...
 
-**Important:** Lock stripes reduce contention *within a single process*. They are not distributed partitions. Each instance maintains all stripes locally.
+decisions         - Audit log of all decisions
+├── id (UUID)
+├── subject_id (FK)
+├── decision
+├── evidence (JSONB)
+└── latency_ms
+```
 
 ### Policy Management (`src/policy/`)
 
 - `loader.rs` - Loads policy YAML and sanctions lists
 - `hot_reload.rs` - Watches files, broadcasts updates via tokio watch channels
 
-Policies reload without restart. Actor state is preserved; only rules change.
-
-### Storage Layer (`src/storage/`)
-
-- `wal.rs` - Write-ahead log for durability (optional)
-- `snapshot.rs` - Full state snapshots for recovery
-- `recovery.rs` - State reconstruction on startup
+Policies reload without restart. Database state is unaffected; only rules change.
 
 ---
 
@@ -144,38 +159,44 @@ Policies reload without restart. Actor state is preserved; only rules change.
    ├── KYC cap check
    └── Short-circuit if REJECT_FATAL
 
-3. Phase 2: Streaming Rules
-   ├── Hash user_id → stripe index
-   ├── Get or create UserActor
-   ├── Lock actor, prune expired entries
-   ├── Evaluate daily volume
-   ├── Evaluate structuring
-   └── Update state with new transaction
+3. Phase 2: Upsert Subject
+   └── storage.upsert_subject() → subject_id
 
-4. Combine Results
-   └── Take maximum severity decision
+4. Phase 3: Streaming Rules
+   ├── Query rolling volume from storage
+   ├── Query small tx count from storage
+   └── Evaluate against thresholds
 
-5. Optional: Write to WAL
+5. Phase 4: Record Transaction
+   └── storage.record_transaction()
 
-6. HTTP Response
+6. Phase 5: Record Decision
+   └── storage.record_decision()
+
+7. HTTP Response
    └── DecisionResponse JSON
 ```
 
-### Actor State Management
+### Rolling Window Queries
 
-```
-UserState
-├── user_id: String
-├── entries: VecDeque<TxEntry>  // bounded, 10k max
-│   └── TxEntry { timestamp, usd_value }
-└── last_access: DateTime       // for idle eviction
+Streaming rules query the database for rolling window aggregates:
 
-On each evaluation:
-1. Prune entries older than 24h (pop_front)
-2. Query rolling totals
-3. Push new entry (push_back)
-4. Enforce capacity limit
+```sql
+-- Daily volume (24h rolling)
+SELECT COALESCE(SUM(usd_value), 0)
+FROM transactions
+WHERE subject_id = $1
+  AND created_at > now() - interval '24 hours'
+
+-- Structuring detection (small tx count)
+SELECT COUNT(*)
+FROM transactions
+WHERE subject_id = $1
+  AND created_at > now() - interval '24 hours'
+  AND usd_value < $threshold
 ```
+
+Database handles expiration automatically via timestamp filtering.
 
 ---
 
@@ -185,16 +206,18 @@ On each evaluation:
 
 Stateless rules run first because:
 - Most violations are caught early (sanctions, jurisdiction)
-- No state access needed for common rejections
-- Reduces load on actor pool
+- No database access needed for common rejections
+- Reduces load on storage layer
 
-### 64 Lock Stripes
+### PostgreSQL for State
 
-Why 64 stripes:
-- Reduces lock contention ~64x vs. single lock
-- Balances memory overhead vs. contention reduction
-- Hash distribution spreads load evenly
-- Not for distribution—all stripes are local to each process
+Why PostgreSQL over in-memory:
+- Service is stateless—can scale horizontally without sticky sessions
+- State survives restarts without WAL recovery
+- Audit trail of all decisions persisted automatically
+- Rolling window queries are efficient with proper indexing
+
+Trade-off: Adds ~1-5ms latency for database queries vs. in-memory lookups.
 
 ### Bloom Filter for OFAC
 
@@ -208,12 +231,12 @@ Most addresses are clean. Bloom filter says "definitely not in set" immediately 
 
 Uses `rust_decimal::Decimal` for all money values. Prevents floating-point errors in financial calculations.
 
-### Rolling Window with Lazy Pruning
+### Database Rolling Windows
 
-No per-entry expiration timers. On each access:
-- Prune expired entries from front of deque
-- Bounded memory per user
-- Amortized O(1) operations
+No application-level expiration logic. Database handles it:
+- `WHERE created_at > now() - interval '24 hours'` filters expired entries
+- Index on `(subject_id, created_at)` makes queries efficient
+- Old data can be archived/deleted via scheduled jobs
 
 ---
 
@@ -227,14 +250,17 @@ riskr [OPTIONS]
 --listen-addr <ADDR>          Listen address (default: 0.0.0.0:8080)
 --policy-path <PATH>          Policy YAML file (default: policy.yaml)
 --sanctions-path <PATH>       Sanctions list (default: sanctions.txt)
---wal-path <PATH>             WAL directory (optional)
---snapshot-path <PATH>        Snapshot directory (optional)
+--database-url <URL>          PostgreSQL connection string (optional)
+--db-pool-min <N>             Min pool connections (default: 2)
+--db-pool-max <N>             Max pool connections (default: 10)
+--run-migrations              Run migrations on startup (default: false)
 --policy-reload-secs <SECS>   Reload interval (default: 30)
 --latency-budget-ms <MS>      Latency warning threshold (default: 100)
---actor-idle-secs <SECS>      Idle eviction timeout (default: 3600)
 ```
 
 All arguments support environment variables with `RISKR_` prefix.
+
+Without `--database-url`, the service uses an in-memory mock storage (useful for development/testing).
 
 ### Policy Format
 
@@ -350,10 +376,9 @@ rules:
 ### GET /metrics
 
 Prometheus text format with:
-- `riskr_actors_total` - Active user actors
-- `riskr_entries_total` - Transaction entries in memory
 - `riskr_uptime_seconds` - Server uptime
-- `riskr_decisions_total{decision="..."}` - Decision counts
+- `riskr_inline_rules` - Number of inline rules loaded
+- `riskr_streaming_rules` - Number of streaming rules loaded
 
 ---
 
@@ -394,13 +419,21 @@ Prometheus text format with:
 
 ### Adding a New Streaming Rule
 
-Same pattern, but implement `StreamingRule` trait:
+Same pattern, but implement async `StreamingRule` trait:
 ```rust
+#[async_trait]
 impl StreamingRule for MyStreamingRule {
     fn id(&self) -> &str { &self.id }
 
-    fn evaluate(&self, event: &TxEvent, state: &UserState) -> RuleResult {
-        // Access state.entries for historical data
+    async fn evaluate(
+        &self,
+        event: &TxEvent,
+        subject_id: Uuid,
+        storage: &dyn Storage,
+    ) -> Result<RuleResult> {
+        // Query storage for historical data
+        let volume = storage.get_rolling_volume(subject_id, self.window).await?;
+        // Evaluate against thresholds
     }
 }
 ```
@@ -412,15 +445,13 @@ impl StreamingRule for MyStreamingRule {
 | Operation | Typical Latency |
 |-----------|-----------------|
 | Inline rule evaluation | <1ms |
-| Actor lookup (hot) | <100µs |
-| Actor creation (cold) | ~1ms |
-| State query (volume/structuring) | <10µs |
 | OFAC bloom filter check | <1µs |
-| **Total decision** | **<10ms typical** |
+| Database: upsert subject | ~1-2ms |
+| Database: rolling volume query | ~1-3ms |
+| Database: record transaction | ~1-2ms |
+| **Total decision** | **<10-15ms typical** |
 
-**Memory per user:** ~50KB (256 entries max)
-
-**Throughput:** ~1000 decisions/sec per core
+**Note:** Database latency depends on network proximity and connection pooling. Co-located PostgreSQL with proper indexing achieves the lower bounds.
 
 ---
 
@@ -428,24 +459,35 @@ impl StreamingRule for MyStreamingRule {
 
 ### Resource Requirements
 
-- **Memory:** 500MB baseline + 50KB per concurrent user
+- **Memory:** ~100MB baseline (stateless service)
 - **CPU:** Scales linearly with cores
-- **Storage:** Optional WAL/snapshots
+- **Database:** PostgreSQL 14+ with proper indexing
 
-### Scaling Considerations
+### Scaling
 
-Each instance maintains **independent in-memory state**. Running multiple instances requires one of:
+The service is stateless. All state lives in PostgreSQL.
 
-| Approach | Description |
-|----------|-------------|
-| **Sticky sessions** | Route requests by user_id hash to consistent instance |
-| **Shared state** | External store (Redis/database) for user state |
-| **Single instance** | Simplest option for moderate load |
+| Scaling | Approach |
+|---------|----------|
+| **Horizontal** | Add more instances behind a load balancer |
+| **Vertical** | Increase database connection pool size |
+| **Database** | Read replicas for query scaling, partitioning for write scaling |
 
-Without sticky routing, streaming rules (volume limits, structuring detection) would see fragmented user history across instances.
+No sticky sessions required. Any instance can handle any request.
 
 ### Health Checks
 
 - `/health` - Liveness probe
 - `/ready` - Readiness probe (rules loaded)
 - `/metrics` - Prometheus scraping
+
+### Database Indexes
+
+Recommended indexes for performance:
+```sql
+CREATE INDEX idx_transactions_subject_created
+    ON transactions(subject_id, created_at DESC);
+
+CREATE INDEX idx_subjects_user_id
+    ON subjects(user_id);
+```
