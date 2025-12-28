@@ -8,8 +8,10 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[repr(u8)]
+#[derive(Default)]
 pub enum Decision {
     /// Transaction approved
+    #[default]
     Allow = 0,
     /// Temporary denial, client may retry
     SoftDenyRetry = 1,
@@ -65,11 +67,6 @@ impl Decision {
     }
 }
 
-impl Default for Decision {
-    fn default() -> Self {
-        Decision::Allow
-    }
-}
 
 impl fmt::Display for Decision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

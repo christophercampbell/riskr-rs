@@ -67,7 +67,7 @@ impl DecisionRequest {
             .subject
             .addresses
             .iter()
-            .map(|a| Address::new(a))
+            .map(Address::new)
             .collect();
 
         // Determine direction from tx type

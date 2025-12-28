@@ -1,4 +1,4 @@
-.PHONY: help build check test bench fmt lint clean run dev migrate db-reset docker docker-run
+.PHONY: help build check test bench lint clean run dev migrate db-reset docker docker-run
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -15,12 +15,9 @@ test: ## Run tests
 bench: ## Run benchmarks
 	cargo bench
 
-fmt: ## Format code
+lint: ## Format code and run clippy with auto-fix
 	cargo fmt
-
-lint: ## Check formatting and run clippy
-	cargo fmt --check
-	cargo clippy -- -D warnings
+	cargo clippy --fix --allow-dirty -- -D warnings
 
 clean: ## Remove build artifacts
 	cargo clean
