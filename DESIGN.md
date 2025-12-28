@@ -13,7 +13,7 @@ Financial institutions need to screen cryptocurrency transactions against compli
 
 ### Solution
 
-A dual-phase architecture separating fast stateless rules from stateful rules that query rolling windows from PostgreSQL. The service is stateless—all state lives in the database, enabling horizontal scaling.
+A dual-phase architecture separating fast stateless rules from stateful rules that query rolling windows from PostgreSQL.
 
 ---
 
@@ -212,12 +212,11 @@ Stateless rules run first because:
 ### PostgreSQL for State
 
 Why PostgreSQL over in-memory:
-- Service is stateless—can scale horizontally without sticky sessions
-- State survives restarts without WAL recovery
-- Audit trail of all decisions persisted automatically
-- Rolling window queries are efficient with proper indexing
+- Survives restarts without WAL recovery
+- Audit trail persisted automatically
+- Scales horizontally without sticky sessions
 
-Trade-off: Adds ~1-5ms latency for database queries vs. in-memory lookups.
+Trade-off: ~1-5ms latency per query vs. in-memory.
 
 ### Bloom Filter for OFAC
 
@@ -465,7 +464,7 @@ impl StreamingRule for MyStreamingRule {
 
 ### Scaling
 
-The service is stateless. All state lives in PostgreSQL.
+Stateless service, state lives in PostgreSQL.
 
 | Scaling | Approach |
 |---------|----------|

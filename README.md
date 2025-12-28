@@ -11,7 +11,7 @@ riskr-rs evaluates transactions against configurable compliance rules in two pha
 
 Decisions follow severity ordering: `Allow < SoftDenyRetry < HoldAuto < Review < RejectFatal`
 
-State is persisted to PostgreSQL, making the service stateless and horizontally scalable.
+State is persisted to PostgreSQL.
 
 ## Quick Start
 
@@ -211,7 +211,7 @@ rules:
                               └─────────────────────┘
 ```
 
-The service is stateless—all state lives in PostgreSQL. This enables horizontal scaling without sticky sessions.
+Stateless—scales horizontally without sticky sessions.
 
 ## Development
 
