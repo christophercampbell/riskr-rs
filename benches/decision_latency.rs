@@ -3,14 +3,11 @@ use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use riskr::actor::pool::ActorPool;
-use riskr::actor::state::UserState;
 use riskr::domain::event::{Asset, Chain, Direction, EventId, TxEvent, SCHEMA_VERSION};
 use riskr::domain::subject::{AccountId, Address, CountryCode, KycTier, Subject, UserId};
 use riskr::domain::Decision;
 use riskr::rules::inline::{JurisdictionRule, KycCapRule, OfacRule};
-use riskr::rules::streaming::{DailyVolumeRule, StructuringRule};
-use riskr::rules::{InlineRule, StreamingRule};
+use riskr::rules::InlineRule;
 
 fn create_test_event(user_id: &str, usd_value: Decimal) -> TxEvent {
     let now = chrono::Utc::now();
@@ -75,9 +72,9 @@ fn bench_jurisdiction_rule(c: &mut Criterion) {
 
 fn bench_kyc_cap_rule(c: &mut Criterion) {
     let mut caps = std::collections::HashMap::new();
-    caps.insert(KycTier::L0, Decimal::new(100, 0));
-    caps.insert(KycTier::L1, Decimal::new(1000, 0));
-    caps.insert(KycTier::L2, Decimal::new(10000, 0));
+    caps.insert("L0".to_string(), Decimal::new(100, 0));
+    caps.insert("L1".to_string(), Decimal::new(1000, 0));
+    caps.insert("L2".to_string(), Decimal::new(10000, 0));
 
     let rule = KycCapRule::new("R3_KYC".to_string(), Decision::HoldAuto, caps);
 
@@ -85,74 +82,6 @@ fn bench_kyc_cap_rule(c: &mut Criterion) {
 
     c.bench_function("kyc_cap_rule_evaluate_within_cap", |b| {
         b.iter(|| rule.evaluate(black_box(&event)))
-    });
-}
-
-fn bench_daily_volume_rule(c: &mut Criterion) {
-    let rule = DailyVolumeRule::new(
-        "R4_DAILY".to_string(),
-        Decision::HoldAuto,
-        Decimal::new(50000, 0),
-    );
-
-    let event = create_test_event("user1", Decimal::new(1000, 0));
-    let state = UserState::new(1000);
-
-    c.bench_function("daily_volume_rule_evaluate", |b| {
-        b.iter(|| rule.evaluate(black_box(&event), black_box(&state)))
-    });
-}
-
-fn bench_structuring_rule(c: &mut Criterion) {
-    let rule = StructuringRule::new(
-        "R5_STRUCTURING".to_string(),
-        Decision::Review,
-        5,
-        Decimal::new(2000, 0),
-        Decimal::new(3000, 0),
-        std::time::Duration::from_secs(3600),
-    );
-
-    let event = create_test_event("user1", Decimal::new(2500, 0));
-    let state = UserState::new(1000);
-
-    c.bench_function("structuring_rule_evaluate", |b| {
-        b.iter(|| rule.evaluate(black_box(&event), black_box(&state)))
-    });
-}
-
-fn bench_actor_pool_get(c: &mut Criterion) {
-    let streaming_rules: Vec<Arc<dyn StreamingRule>> = vec![
-        Arc::new(DailyVolumeRule::new(
-            "R4_DAILY".to_string(),
-            Decision::HoldAuto,
-            Decimal::new(50000, 0),
-        )),
-    ];
-
-    let pool = ActorPool::new(streaming_rules);
-
-    // Pre-populate with some users
-    for i in 0..1000 {
-        pool.get_or_create(&format!("user{}", i));
-    }
-
-    c.bench_function("actor_pool_get_existing", |b| {
-        let mut i = 0u32;
-        b.iter(|| {
-            let user_id = format!("user{}", i % 1000);
-            i = i.wrapping_add(1);
-            pool.get_or_create(black_box(&user_id))
-        })
-    });
-
-    c.bench_function("actor_pool_get_new", |b| {
-        let mut i = 1000u32;
-        b.iter(|| {
-            let user_id = format!("newuser{}", i);
-            i = i.wrapping_add(1);
-            pool.get_or_create(black_box(&user_id))
-        })
     });
 }
 
@@ -165,7 +94,7 @@ fn bench_full_inline_pipeline(c: &mut Criterion) {
     blocked_countries.insert("IR".to_string());
 
     let mut caps = std::collections::HashMap::new();
-    caps.insert(KycTier::L2, Decimal::new(10000, 0));
+    caps.insert("L2".to_string(), Decimal::new(10000, 0));
 
     let rules: Vec<Arc<dyn InlineRule>> = vec![
         Arc::new(OfacRule::new(
@@ -206,9 +135,6 @@ criterion_group!(
     bench_ofac_rule,
     bench_jurisdiction_rule,
     bench_kyc_cap_rule,
-    bench_daily_volume_rule,
-    bench_structuring_rule,
-    bench_actor_pool_get,
     bench_full_inline_pipeline,
 );
 
